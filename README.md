@@ -32,7 +32,7 @@ This project implements the core infrastructure required to scale Large Language
 | :--- | :--- | :--- |
 | **MLP Block (TP)** | Max Error vs Baseline | **0.00000000** |
 | **MLP Block (TP)** | Distributed Latency | **3.74 ms** |
-| **Pipeline (PP)** | Bubble Ratio (2 stages/4 MB) | 20% |
+| **Pipeline (PP)** | Bubble Ratio (2 stages, 4 MB) | **20% (Analytic)** |
 | **KV Cache** | Memory Saving per Node | **~50%** |
 | **E2E (Qwen2)** | 2-Rank TP Correctness | **Bit-identical** |
 
@@ -43,7 +43,7 @@ This project implements the core infrastructure required to scale Large Language
 ## Features
 
 - **Megatron-style TP:** Manual implementation of `ColumnParallelLinear` and `RowParallelLinear` with AllReduce synchronization (no NCCL dependency required for validation).
-- **GPipe Pipeline Schedule:** Fill-drain micro-batch scheduling logic with configurable stage counts and theoretical bubble ratio modeling.
+- **GPipe Pipeline Schedule:** Fill-drain micro-batch scheduling logic with configurable stage counts. Bubble ratio modeled analytically: (p-1)/(m+p-1) = 20% at 2 stages, 4 micro-batches.
 - **KV Cache Head Sharding:** Attention heads distributed across ranks, reducing per-node VRAM consumption by 1/world_size.
 - **Real-weight Validation:** TP-sharded MLP forward pass on Qwen2-0.5B weights (`hidden_size=896`, `intermediate_size=4864`) produces bit-identical output to single-process baseline.
 
