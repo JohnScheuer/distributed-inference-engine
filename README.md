@@ -4,75 +4,93 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Distributed](https://img.shields.io/badge/PyTorch-Distributed-orange.svg)](https://pytorch.org/docs/stable/distributed.html)
-[![Status](https://img.shields.io/badge/Status-Numerical%20Fidelity%20Passed-brightgreen.svg)](#)
 
-**Simulated Multi-GPU inference runtime implementing Megatron-style Tensor Parallelism and GPipe Pipeline Parallelism from scratch.**
+**Simulated distributed inference runtime for algorithmic validation of Tensor Parallelism and Pipeline Parallelism.**
 
-TP & PP Implementation | AllReduce Sync | KV Cache Sharding | Bit-identical Fidelity
+Validated on Qwen2-0.5B | Megatron-style TP | GPipe PP | KV Cache Sharding
 
 </div>
 
 ---
 
-## What It Does
+## What This Does
 
-This project implements the core infrastructure required to scale Large Language Models across multiple compute nodes. It breaks down monolithic layers into sharded components, managing cross-process communication and micro-batch scheduling manually via `torch.distributed`.
+This project implements the core infrastructure required to scale Large Language Models across multiple compute nodes. It uses `torch.distributed` with the **Gloo backend** to simulate a multi-GPU environment via independent Python processes.
 
-- **Tensor Parallelism (TP):** Megatron-style weight sharding across rows and columns.
-- **Pipeline Parallelism (PP):** Inter-layer distribution with a GPipe-style scheduler.
-- **KV Cache Sharding:** Attention head distribution to optimize memory footprint.
+**Objective:** Validate the mathematical correctness of parallelism algorithms (sharding, synchronization, scheduling) on a single machine before multi-GPU deployment.
+
+> **Note:** This validates parallelism **logic**, not hardware performance. Production multi-GPU scaling requires the NCCL backend and physical interconnects (NVLink/PCIe).
 
 ---
 
 ## Performance & Fidelity (Qwen2-0.5B)
 
-**Configuration:** 2-Rank Parallelism, Gloo Backend (CPU Sim), FP32 Precision.
+**Configuration:** 2-Rank Parallelism, Gloo (CPU Sim), FP32 Precision.  
+**Hardware:** NVIDIA RTX 2070 8GB | Intel i7-10700K.
 
-| Component | Metric | Result |
+### 1. MLP Block Tensor Parallelism (TP)
+Validating `ColumnParallelLinear` + `RowParallelLinear` on a real Qwen2 MLP block (`hidden_size=896`).
+
+| Config | Latency | Max Error vs Baseline |
 | :--- | :--- | :--- |
-| **MLP Block (TP)** | Max Error vs Baseline | **0.00000000** |
-| **MLP Block (TP)** | Distributed Latency | **3.74 ms** |
-| **Pipeline (PP)** | Bubble Ratio (2 stages, 4 MB) | **20% (Analytic)** |
-| **KV Cache** | Memory Saving per Node | **~50%** |
-| **E2E (Qwen2)** | 2-Rank TP Correctness | **Bit-identical** |
+| Single-process Baseline | ~2.10 ms | Reference |
+| **2-Rank TP (Simulated)** | **3.74 ms** | **0.00000000** |
+| Communication Overhead | ~78% | - |
 
-> **Numerical Note:** Zero absolute error is expected in FP32 with the Gloo backend due to deterministic CPU operations. Production NCCL on physical Multi-GPU environments typically introduces FP16 rounding differences (< 1e-3).
+*Note: High overhead is expected in simulation as inter-process communication via RAM (Gloo) is significantly slower than GPU compute.*
+
+### 2. Pipeline Parallelism (PP)
+| Metric | Result |
+| :--- | :--- |
+| **Bubble Ratio (Analytic)** | **20%** (2 stages, 4 micro-batches) |
+| **Micro-batch Sync** | Bit-identical fidelity vs Sequential |
+
+### 3. KV Cache Sharding
+Memory footprint per node scales as `1/world_size`:
+- **2 Ranks:** 50% memory saving per node.
+- **4 Ranks:** 75% memory saving per node.
+- **8 Ranks:** 87.5% memory saving per node.
 
 ---
 
 ## Features
 
-- **Megatron-style TP:** Manual implementation of `ColumnParallelLinear` and `RowParallelLinear` with AllReduce synchronization (no NCCL dependency required for validation).
-- **GPipe Pipeline Schedule:** Fill-drain micro-batch scheduling logic with configurable stage counts. Bubble ratio modeled analytically: (p-1)/(m+p-1) = 20% at 2 stages, 4 micro-batches.
-- **KV Cache Head Sharding:** Attention heads distributed across ranks, reducing per-node VRAM consumption by 1/world_size.
-- **Real-weight Validation:** TP-sharded MLP forward pass on Qwen2-0.5B weights (`hidden_size=896`, `intermediate_size=4864`) produces bit-identical output to single-process baseline.
+- **Megatron-style TP:** Manual implementation of Row and Column parallel layers with AllReduce synchronization.
+- **GPipe Schedule:** Fill-drain micro-batch scheduling to optimize pipeline stage utilization.
+- **KV Cache Head Sharding:** Distributed attention heads to enable scaling beyond single-GPU VRAM limits.
+- **Bit-identical Fidelity:** Validated on Qwen2-0.5B real weights with zero numerical divergence in FP32.
 
 ---
 
-## Quick Start
+## Limitations
 
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+- **CPU Simulation:** Uses Gloo backend; not intended for NCCL/multi-GPU performance testing.
+- **Single-Machine:** Multi-process only, not optimized for cross-node networking.
+- **FP32 Only:** FP16 is not used to avoid hardware-specific rounding differences during validation.
+- **Scheduling:** Implements GPipe; advanced schedules like 1F1B are not covered.
 
-# 2. Run Tensor Parallelism Validation
-export PYTHONPATH=.
-python tests/test_tensor_parallel.py
+---
 
-# 3. Run E2E Distributed MLP (Qwen2-0.5B)
-python benchmarks/e2e_distributed.py
-```
+## What This Does NOT Do
+
+- **Physical Multi-GPU Execution:** Does not require multiple GPUs to run.
+- **Production Latency Optimization:** Overhead reflects OS process sync, not NVLink speed.
+- **Data Parallelism (DP):** Focused exclusively on Model Parallelism (TP/PP).
 
 ---
 
 ## LLM Systems Portfolio
 
-This is the final piece of a 5-project series on LLM inference systems:
+This project is part of a comprehensive LLM inference portfolio covering kernels, compilers, serving, deployment, and distributed systems.
+
+**Latest additions to the series:**
 - [distributed-inference-engine](https://github.com/JohnScheuer/distributed-inference-engine): Parallelism & Scaling.
 - [quantization-runtime](https://github.com/JohnScheuer/quantization-runtime): 4-bit AWQ/GPTQ Compression.
 - [rag-inference-stack](https://github.com/JohnScheuer/rag-inference-stack): Knowledge retrieval & API.
 - [lora-inference-runtime](https://github.com/JohnScheuer/lora-inference-runtime): Multi-tenant serving.
 - [speculative-decoding-runtime](https://github.com/JohnScheuer/speculative-decoding-runtime): Latency acceleration.
+
+Full portfolio: [github.com/JohnScheuer](https://github.com/JohnScheuer)
 
 ---
 
