@@ -6,9 +6,9 @@
 [![Distributed](https://img.shields.io/badge/PyTorch-Distributed-orange.svg)](https://pytorch.org/docs/stable/distributed.html)
 [![Status](https://img.shields.io/badge/Status-Numerical%20Fidelity%20Passed-brightgreen.svg)](#)
 
-**Simulated Multi-GPU inference runtime implementing Tensor and Pipeline Parallelism from scratch.**
+**Simulated Multi-GPU inference runtime implementing Megatron-style Tensor Parallelism and GPipe Pipeline Parallelism from scratch.**
 
-TP & PP Implementation | AllReduce Sync | KV Cache Sharding | 0.00 Numerical Error
+TP & PP Implementation | AllReduce Sync | KV Cache Sharding | Bit-identical Fidelity
 
 </div>
 
@@ -16,33 +16,36 @@ TP & PP Implementation | AllReduce Sync | KV Cache Sharding | 0.00 Numerical Err
 
 ## What It Does
 
-This project implements the core infrastructure required to serve Large Language Models across multiple GPUs. It breaks down monolithic models into shards, managing communication and synchronization manually via `torch.distributed`.
+This project implements the core infrastructure required to scale Large Language Models across multiple compute nodes. It breaks down monolithic layers into sharded components, managing cross-process communication and micro-batch scheduling manually via `torch.distributed`.
 
-- **Tensor Parallelism:** Splitting matrix multiplications (Megatron-LM style).
-- **Pipeline Parallelism:** Distributing layers across stages with micro-batching.
-- **KV Cache Sharding:** Reducing memory footprint by sharding attention heads.
+- **Tensor Parallelism (TP):** Megatron-style weight sharding across rows and columns.
+- **Pipeline Parallelism (PP):** Inter-layer distribution with a GPipe-style scheduler.
+- **KV Cache Sharding:** Attention head distribution to optimize memory footprint.
 
 ---
 
 ## Performance & Fidelity (Qwen2-0.5B)
 
-**Configuration:** 2-Rank Parallelism, Gloo Backend, FP32 Precision.
+**Configuration:** 2-Rank Parallelism, Gloo Backend (CPU Sim), FP32 Precision.
 
 | Component | Metric | Result |
 | :--- | :--- | :--- |
-| **MLP Block** | Max Difference vs Baseline | **0.00000000** |
-| **MLP Block** | Distributed Latency | **3.74 ms** |
-| **Pipeline** | Bubble Ratio (2 stages/4 MB) | 20% |
+| **MLP Block (TP)** | Max Error vs Baseline | **0.00000000** |
+| **MLP Block (TP)** | Distributed Latency | **3.74 ms** |
+| **Pipeline (PP)** | Bubble Ratio (2 stages/4 MB) | 20% |
 | **KV Cache** | Memory Saving per Node | **~50%** |
+| **E2E (Qwen2)** | 2-Rank TP Correctness | **Bit-identical** |
+
+> **Numerical Note:** Zero absolute error is expected in FP32 with the Gloo backend due to deterministic CPU operations. Production NCCL on physical Multi-GPU environments typically introduces FP16 rounding differences (< 1e-3).
 
 ---
 
 ## Features
 
-- **Standard Collective Ops:** Manual implementation of Row and Column parallel layers.
-- **Micro-batch Scheduling:** GPipe-style fill-drain schedule to optimize pipeline throughput.
-- **Communication Profiling:** Real vs. Predicted bandwidth analysis.
-- **Architectural Validation:** Successfully tested with Qwen2-0.5B real weights.
+- **Megatron-style TP:** Manual implementation of `ColumnParallelLinear` and `RowParallelLinear` with AllReduce synchronization (no NCCL dependency required for validation).
+- **GPipe Pipeline Schedule:** Fill-drain micro-batch scheduling logic with configurable stage counts and theoretical bubble ratio modeling.
+- **KV Cache Head Sharding:** Attention heads distributed across ranks, reducing per-node VRAM consumption by 1/world_size.
+- **Real-weight Validation:** TP-sharded MLP forward pass on Qwen2-0.5B weights (`hidden_size=896`, `intermediate_size=4864`) produces bit-identical output to single-process baseline.
 
 ---
 
@@ -56,17 +59,9 @@ pip install -r requirements.txt
 export PYTHONPATH=.
 python tests/test_tensor_parallel.py
 
-# 3. Run E2E Distributed MLP (Qwen2)
+# 3. Run E2E Distributed MLP (Qwen2-0.5B)
 python benchmarks/e2e_distributed.py
 ```
-
----
-
-## Design Decisions
-
-- **Numerical Stability:** Chose the Gloo backend for local process simulation, ensuring identical results to single-GPU execution.
-- **Bias Handling:** Implemented proper post-AllReduce bias addition to maintain mathematical consistency in parallel layers.
-- **Isolated Groups:** Designed for scalability beyond 2 ranks.
 
 ---
 
